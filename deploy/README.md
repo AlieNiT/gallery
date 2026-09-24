@@ -12,7 +12,7 @@ These instructions assume a fresh Ubuntu 22.04/24.04 or Debian 12/13 server, SSH
 
 ```sh
 apt update
-apt install -y ca-certificates git python3 python3-venv python3-pip sudo sqlite3
+apt install -y ca-certificates git nano python3 python3-venv python3-pip sudo sqlite3
 adduser --disabled-password --gecos "" gallery
 install -d -o gallery -g gallery -m 755 /opt/gallery
 sudo -u gallery git clone https://github.com/AlieNiT/gallery.git /opt/gallery
