@@ -1,0 +1,100 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="gallery-key" content="{{ api_key }}">
+  <title>Framefinder — local event photo search</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+  <script src="{{ url_for('static', filename='app.js') }}" defer></script>
+</head>
+<body>
+  <div class="site-shell">
+    <header class="topbar">
+      <a class="wordmark" href="/" aria-label="Framefinder home"><span class="mark" aria-hidden="true"></span>Framefinder</a>
+      <div class="local-badge"><span class="status-dot" aria-hidden="true"></span>Only on this computer</div>
+    </header>
+
+    <main>
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero-copy">
+          <p class="eyebrow">Your event, back in focus</p>
+          <h1 id="hero-title">Find yourself<br>in the <em>frame.</em></h1>
+          <p class="hero-description">Add the event photos, then send a selfie. Framefinder pulls out the moments you appeared in.</p>
+        </div>
+        <div class="hero-index" aria-label="Library totals">
+          <div class="index-heading"><span class="index-symbol" aria-hidden="true">◈</span> Library index</div>
+          <div class="index-rule"></div>
+          <div class="index-line"><span>Photos</span><strong id="photo-count">0</strong></div>
+          <div class="index-line"><span>Faces found</span><strong id="face-count">0</strong></div>
+          <div class="index-line"><span>Face groups</span><strong id="group-count">0</strong></div>
+          <div class="index-foot">Built from the photos on this computer.</div>
+        </div>
+      </section>
+
+      <section class="workspace" aria-label="Add and search photos">
+        <article class="panel upload-panel">
+          <div class="panel-heading">
+            <span class="panel-kicker">Build the library</span>
+            <h2>Add event photos</h2>
+            <p>Select a batch of photos. They are saved here and indexed as each upload finishes.</p>
+          </div>
+          <label class="drop-zone" id="drop-zone" for="event-files">
+            <span class="drop-glyph" aria-hidden="true"><span></span></span>
+            <strong>Drop photos here</strong>
+            <span>or click to choose JPEG, PNG, or WebP files</span>
+            <input id="event-files" type="file" accept="image/jpeg,image/png,image/webp" multiple>
+          </label>
+          <div class="selection-line" id="selection-line">No photos selected</div>
+          <div class="progress-track" id="upload-track" hidden><span id="upload-progress"></span></div>
+          <button class="button button-primary" id="upload-button" type="button" disabled>Add photos to library <span aria-hidden="true">↗</span></button>
+          <p class="feedback" id="upload-feedback" role="status" aria-live="polite"></p>
+        </article>
+
+        <article class="panel search-panel">
+          <div class="panel-heading">
+            <span class="panel-kicker">Search the library</span>
+            <h2>Show me my photos</h2>
+            <p>A clear selfie with one face works best. Your selfie is used for this search and is not saved to the library.</p>
+          </div>
+          <label class="selfie-picker" for="selfie-file">
+            <span class="selfie-preview-wrap"><img id="selfie-preview" alt="Selected selfie preview" hidden><span id="selfie-placeholder" class="selfie-placeholder" aria-hidden="true">⌁</span></span>
+            <span class="selfie-label"><strong id="selfie-choice">Choose a selfie</strong><small>Front-facing, good light, just you</small></span>
+            <span class="picker-arrow" aria-hidden="true">↗</span>
+            <input id="selfie-file" type="file" accept="image/jpeg,image/png,image/webp">
+          </label>
+          <button class="button button-light" id="search-button" type="button" disabled>Find my photos <span aria-hidden="true">→</span></button>
+          <p class="feedback feedback-on-dark" id="search-feedback" role="status" aria-live="polite"></p>
+          <button class="text-link" id="browse-button" type="button">Selfie missed? Browse faces <span aria-hidden="true">↗</span></button>
+        </article>
+      </section>
+
+      <section class="gallery-section" id="results-section" aria-labelledby="results-heading">
+        <div class="section-heading">
+          <div><p class="eyebrow">Contact sheet</p><h2 id="results-heading">Your matches</h2></div>
+          <span class="section-count" id="results-count">Search with a selfie to begin</span>
+        </div>
+        <div class="empty-state" id="results-empty"><span class="empty-aperture" aria-hidden="true"></span><p>Your photos will appear here after a search.</p></div>
+        <div class="photo-grid" id="results-grid" hidden></div>
+      </section>
+
+      <section class="faces-section" id="faces-section" aria-labelledby="faces-heading" hidden>
+        <div class="section-heading">
+          <div><p class="eyebrow">Another way in</p><h2 id="faces-heading">Choose your face</h2></div>
+          <button class="quiet-button" id="face-mode" type="button">Show every detected face</button>
+        </div>
+        <p class="section-intro">Select a face to see photos that look similar. Face groups keep this list short; switch to every face if yours is missing.</p>
+        <div class="face-grid" id="face-grid"></div>
+        <div class="pager"><button class="quiet-button" id="face-prev" type="button" disabled>← Previous</button><span id="face-page-label"></span><button class="quiet-button" id="face-next" type="button" disabled>Next →</button></div>
+      </section>
+
+      <section class="recent-section" aria-labelledby="recent-heading">
+        <div class="section-heading"><div><p class="eyebrow">Just added</p><h2 id="recent-heading">Recent photos</h2></div><span class="section-count" id="recent-count"></span></div>
+        <div class="photo-grid compact-grid" id="recent-grid"></div>
+      </section>
+    </main>
+
+    <footer><span>Framefinder / local edition</span><span>Photos stay in your local library.</span></footer>
+  </div>
+</body>
+</html>

@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
+from threading import Lock
 
 import cv2
 import numpy as np
@@ -32,6 +33,7 @@ class FaceEngine:
                 raise FileNotFoundError(f"Missing {path}; run python -m gallery.models first")
         self.detector = cv2.FaceDetectorYN.create(str(detector_path), "", (320, 320), score_threshold=0.8)
         self.recognizer = cv2.FaceRecognizerSF.create(str(recognizer_path), "")
+        self.lock = Lock()
 
     def extract(self, image_bytes: bytes) -> list[Face]:
         # Pillow applies EXIF orientation before OpenCV sees the image.
@@ -41,20 +43,21 @@ class FaceEngine:
             rgb = np.asarray(image)
         bgr = cv2.cvtColor(rgb, cv2.COLOR_RGB2BGR)
         height, width = bgr.shape[:2]
-        self.detector.setInputSize((width, height))
-        _, detections = self.detector.detect(bgr)
-        if detections is None:
-            return []
         faces = []
-        for detection in detections:
-            aligned = self.recognizer.alignCrop(bgr, detection)
-            vector = self.recognizer.feature(aligned).flatten().astype(np.float32)
-            x, y, w, h = (int(value) for value in detection[:4])
-            padding = int(max(w, h) * 0.25)
-            crop = image.crop((max(0, x - padding), max(0, y - padding),
-                               min(width, x + w + padding), min(height, y + h + padding)))
-            crop.thumbnail((160, 160))
-            output = BytesIO()
-            crop.save(output, format="JPEG", quality=80)
-            faces.append(Face(vector=vector, thumbnail=output.getvalue()))
+        with self.lock:
+            self.detector.setInputSize((width, height))
+            _, detections = self.detector.detect(bgr)
+            if detections is None:
+                return []
+            for detection in detections:
+                aligned = self.recognizer.alignCrop(bgr, detection)
+                vector = self.recognizer.feature(aligned).flatten().astype(np.float32)
+                x, y, w, h = (int(value) for value in detection[:4])
+                padding = int(max(w, h) * 0.25)
+                crop = image.crop((max(0, x - padding), max(0, y - padding),
+                                   min(width, x + w + padding), min(height, y + h + padding)))
+                crop.thumbnail((160, 160))
+                output = BytesIO()
+                crop.save(output, format="JPEG", quality=80)
+                faces.append(Face(vector=vector, thumbnail=output.getvalue()))
         return faces

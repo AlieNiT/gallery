@@ -1,6 +1,27 @@
-# Private event photo bot
+# Framefinder — local event photo search
 
-This first version watches one private Telegram channel. It indexes each new photo's faces, lets a channel member send a single-person selfie, and returns likely matching channel photos. If the selfie misses, `/faces` shows pages of detected face groups; tapping a face searches for similar photos. `/allfaces` includes every detected face when grouping is wrong. `/more` pages through results and `/status` shows indexing progress.
+The current MVP runs on your computer. Open a browser, upload event photos by hand, and search them with a one-person selfie. If the selfie does not work, browse detected faces and select yours. The interface shows matching photos and lets you open the original files. No Telegram bot token, cloud account, or server is needed for this version.
+
+## Run the local MVP
+
+Install Python 3.10 or newer, then from the repository directory run:
+
+```sh
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
+.venv/bin/python -m gallery.models
+.venv/bin/python -m gallery.web
+```
+
+Open [http://127.0.0.1:8765](http://127.0.0.1:8765) on the same computer. Select one or more JPEG, PNG, or WebP event photos, click **Add photos to library**, then choose a selfie and click **Find my photos**. Uploading a batch can take a while because each photo is indexed on this computer. If a selfie has no single clear face or produces no confident match, click **Selfie missed? Browse faces**. Use **Show every detected face** if grouping hides the face you need.
+
+The app binds to `127.0.0.1`, so it is not available to other computers. It saves event originals, previews, face data, and the index under `data/local/`; that directory is excluded from Git. Selfies are processed in memory and are not added to the library. Photos with no detected faces are still saved, but will not appear in face searches. Face matching is approximate, and the face browser exposes every detected attendee to anyone who can use this computer. Use only photos you have permission to process, and do not expose the local app to the internet without adding authentication. Back up `data/local/` if the collection matters.
+
+Run tests with `.venv/bin/python -m unittest discover -s tests -v`. To change the local port, set `PORT` before starting the app. To change where photos are stored, set `DATA_DIR`; the local library is created in its `local/` subdirectory.
+
+## Optional Telegram bot prototype
+
+The optional bot prototype watches one private Telegram channel. It indexes each new photo's faces, lets a channel member send a single-person selfie, and returns likely matching channel photos. If the selfie misses, `/faces` shows pages of detected face groups; tapping a face searches for similar photos. `/allfaces` includes every detected face when grouping is wrong. `/more` pages through results and `/status` shows indexing progress.
 
 The bot stores face descriptors, small face thumbnails, Telegram file IDs, and post times in SQLite. It does not save downloaded photos or selfies locally; the images sent through Telegram remain subject to Telegram's own retention. It does not verify that a selfie or selected face belongs to the person asking; any channel member can search the event collection. Tell attendees about this before rollout, and keep the channel private.
 
@@ -8,7 +29,7 @@ The bot stores face descriptors, small face thumbnails, Telegram file IDs, and p
 
 Immich is excellent when you also want a full photo library: it groups faces and supports people, location, and time filters. [PhotoPrism](https://docs.photoprism.app/user-guide/organize/people/) is another self-hosted library with face and multi-person filters. Neither directly provides this Telegram selfie flow. Immich's [minimum 6 GB RAM requirement](https://docs.immich.app/install/requirements/) and separate library complicate this Telegram-first pilot. This bot uses OpenCV Zoo's [YuNet detector](https://github.com/opencv/opencv_zoo/tree/main/models/face_detection_yunet) and [SFace recognizer](https://github.com/opencv/opencv_zoo/tree/main/models/face_recognition_sface). The models download during setup and are checked against SHA-256 values. Face groups and matches are approximate; use a clear, front-facing selfie. `MATCH_THRESHOLD` defaults to 0.45 and should be tuned with real event images.
 
-## Set up locally
+## Set up the Telegram bot locally
 
 1. In Telegram, create a bot with **@BotFather**. Create a private event channel and add the bot as an administrator. The admin role lets it receive channel posts and reliably check membership.
 2. Install Python 3.10 or newer and run:
