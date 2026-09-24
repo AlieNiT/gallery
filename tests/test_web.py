@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from io import BytesIO
@@ -29,7 +30,10 @@ class FakeEngine:
 class WebAppTest(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.app = create_app(data_dir=Path(self.temporary.name), engine=FakeEngine())
+        # Flask resolves relative send_file paths from the package directory.
+        # A relative library path must therefore be normalized before serving.
+        relative_data_dir = Path(os.path.relpath(self.temporary.name))
+        self.app = create_app(data_dir=relative_data_dir, engine=FakeEngine())
         self.client = self.app.test_client()
         self.headers = {"X-Gallery-Key": self.app.extensions["gallery_api_key"]}
 

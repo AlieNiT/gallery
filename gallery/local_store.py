@@ -22,12 +22,12 @@ IMAGE_MIME_TYPES = {".jpg": "image/jpeg", ".png": "image/png", ".webp": "image/w
 
 class LocalStore:
     def __init__(self, data_dir: Path, engine: FaceEngine):
-        self.data_dir = data_dir
-        self.original_dir = data_dir / "originals"
-        self.preview_dir = data_dir / "previews"
+        self.data_dir = Path(data_dir).expanduser().resolve()
+        self.original_dir = self.data_dir / "originals"
+        self.preview_dir = self.data_dir / "previews"
         self.original_dir.mkdir(parents=True, exist_ok=True)
         self.preview_dir.mkdir(parents=True, exist_ok=True)
-        self.database = data_dir / "local.sqlite3"
+        self.database = self.data_dir / "local.sqlite3"
         self.engine = engine
         self.lock = threading.RLock()
         with self._connect() as connection:
