@@ -70,23 +70,49 @@ class Store:
             self.db.execute("UPDATE assets SET status='failed', error=? WHERE id=?", (error[:500], asset_id))
 
     def save_faces(self, asset_id: int, faces: list[Face], cluster_threshold: float = 0.55) -> None:
-        representatives = self.cluster_representatives()
         with self.db:
-            for face in faces:
-                best_id = None
-                best_score = cluster_threshold
-                for representative in representatives:
-                    score = similarity(face.vector, representative[1])
-                    if score > best_score:
-                        best_id, best_score = representative[0], score
-                cursor = self.db.execute("INSERT INTO faces (asset_id, vector, thumbnail) VALUES (?, ?, ?)",
-                                         (asset_id, face.vector.tobytes(), face.thumbnail))
-                face_id = cursor.lastrowid
-                cluster_id = best_id or face_id
-                self.db.execute("UPDATE faces SET cluster_id=? WHERE id=?", (cluster_id, face_id))
-                if best_id is None:
-                    representatives.append((face_id, face.vector))
+            self._insert_faces(asset_id, faces, cluster_threshold)
             self.db.execute("UPDATE assets SET status='ready', error=NULL WHERE id=?", (asset_id,))
+
+    def import_exported_asset(self, channel_id: int, message_id: int, posted_at: int,
+                              faces: list[Face], cluster_threshold: float = 0.55) -> bool:
+        """Atomically add an exported post or repair a failed/pending one."""
+        with self.db:
+            cursor = self.db.execute("""INSERT INTO assets
+                (channel_id, message_id, file_id, media_type, posted_at, status)
+                VALUES (?, ?, '', 'copy', ?, 'ready')
+                ON CONFLICT(channel_id, message_id) DO UPDATE SET
+                file_id='', media_type='copy', posted_at=excluded.posted_at,
+                status='ready', error=NULL WHERE assets.status!='ready'""",
+                (channel_id, message_id, posted_at))
+            if not cursor.rowcount:
+                return False
+            asset_id = self.db.execute("SELECT id FROM assets WHERE channel_id=? AND message_id=?",
+                                       (channel_id, message_id)).fetchone()[0]
+            self._insert_faces(asset_id, faces, cluster_threshold)
+        return True
+
+    def has_ready_asset(self, channel_id: int, message_id: int) -> bool:
+        return self.db.execute("""SELECT 1 FROM assets WHERE channel_id=? AND message_id=?
+            AND status='ready'""",
+                               (channel_id, message_id)).fetchone() is not None
+
+    def _insert_faces(self, asset_id: int, faces: list[Face], cluster_threshold: float) -> None:
+        representatives = self.cluster_representatives()
+        for face in faces:
+            best_id = None
+            best_score = cluster_threshold
+            for representative in representatives:
+                score = similarity(face.vector, representative[1])
+                if score > best_score:
+                    best_id, best_score = representative[0], score
+            cursor = self.db.execute("INSERT INTO faces (asset_id, vector, thumbnail) VALUES (?, ?, ?)",
+                                     (asset_id, face.vector.tobytes(), face.thumbnail))
+            face_id = cursor.lastrowid
+            cluster_id = best_id or face_id
+            self.db.execute("UPDATE faces SET cluster_id=? WHERE id=?", (cluster_id, face_id))
+            if best_id is None:
+                representatives.append((face_id, face.vector))
 
     def cluster_representatives(self) -> list[tuple[int, np.ndarray]]:
         rows = self.db.execute("SELECT id, vector FROM faces WHERE id=cluster_id ORDER BY id").fetchall()

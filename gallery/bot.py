@@ -139,7 +139,10 @@ class GalleryBot:
             return
         for asset_id in ids:
             asset = self.store.asset(asset_id)
-            if asset["media_type"] == "photo":
+            if asset["media_type"] == "copy":
+                self.tg.call("copyMessage", {"chat_id": user_id, "from_chat_id": asset["channel_id"],
+                                             "message_id": asset["message_id"]})
+            elif asset["media_type"] == "photo":
                 self.tg.photo(user_id, asset["file_id"])
             else:
                 self.tg.call("sendDocument", {"chat_id": user_id, "document": asset["file_id"]})

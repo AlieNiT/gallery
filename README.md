@@ -1,6 +1,6 @@
 # Framefinder — event photo search
 
-Framefinder has two separate modes: a local browser MVP for hand-uploaded photos, and an always-on Telegram bot that indexes new posts in a private event channel. Both support selfie search and a browse-faces fallback. [Server deployment instructions](deploy/README.md) cover the Telegram bot.
+Framefinder has two separate modes: a local browser MVP for hand-uploaded photos, and an always-on Telegram bot that indexes new posts in a private event channel. A one-time Telegram Desktop export can backfill older channel photos. Both modes support selfie search and a browse-faces fallback. [Server deployment instructions](deploy/README.md) cover the Telegram bot and backfill.
 
 ## Run the local MVP
 
@@ -44,7 +44,7 @@ Immich is excellent when you also want a full photo library: it groups faces and
 
 5. Send `/start` to the bot from a Telegram account that has joined the channel, then send a selfie. Test `/faces`, a numbered face button, and `/more`. Run `/status` while a batch of channel photos is indexing.
 
-For a large initial batch, post images to the channel in batches while the bot is running. Bot API updates do not provide arbitrary old channel history: images posted before the bot became admin must be posted again. Normal Telegram photos are compressed and may lose original EXIF data. Post as image documents if you want to preserve original metadata for a future time or location feature, while keeping each image below the Bot API's [20 MB download limit](https://core.telegram.org/bots/api#getfile). This version uses channel post time. Oversized or unreadable posts appear in `/status` as failed; inspect service logs and repost a smaller image. The database persists across restarts; back it up regularly.
+For a large initial batch, post images to the channel in batches while the bot is running. Bot API updates do not provide arbitrary old channel history; [backfill older posts with a Telegram Desktop export](deploy/README.md#index-photos-already-in-the-channel), without reposting. Normal Telegram photos are compressed and may lose original EXIF data. Post as image documents if you want to preserve original metadata for a future time or location feature, while keeping each image below the Bot API's [20 MB download limit](https://core.telegram.org/bots/api#getfile). This version uses channel post time. Oversized or unreadable new posts appear in `/status` as failed; inspect service logs or use a complete channel export for backfill. The database persists across restarts; back it up regularly.
 
 ## Always-on server and GitHub CI
 

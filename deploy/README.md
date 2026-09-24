@@ -30,7 +30,25 @@ set +a
 
 Post one **new** image to the channel and run `.venv/bin/python -m gallery.channel_id`. Put the printed negative ID in `.env`, reload it with the three `set -a` / `. ./.env` / `set +a` lines, and run `.venv/bin/python -m gallery.check`. Continue only when the check prints `Ready`. For a manual smoke test, start `.venv/bin/python -m gallery.bot`; stop it with Ctrl-C when finished.
 
-The bot uses long polling, so it needs no domain, TLS certificate, or inbound HTTP port. Its SQLite database will be at `data/gallery.sqlite3` for the default `.env`. The local web app's `data/local/` library is separate and **does not sync** to Telegram. Send event images to the channel after the bot is an admin and running. Telegram does not provide arbitrary old channel history, and pending updates expire after at most 24 hours. The hosted Bot API downloads files up to 20 MB.
+The bot uses long polling, so it needs no domain, TLS certificate, or inbound HTTP port. Its SQLite database will be at `data/gallery.sqlite3` for the default `.env`. The local web app's `data/local/` library is separate and **does not sync** to Telegram. Send event images to the channel after the bot is an admin and running. Pending updates expire after at most 24 hours; use the one-time backfill below for older channel posts. The hosted Bot API downloads files up to 20 MB.
+
+## Index photos already in the channel
+
+The bot cannot fetch arbitrary past channel history through the Bot API. For a one-time backfill, use **Telegram Desktop** on your computer, open this exact channel, choose **⋮ > Export chat history**, include **Photos** (and **Files** if you posted images as documents), choose **Machine-readable JSON**, and download the media. Keep the complete export folder together; `result.json` alone is not enough. Do not export all chats or upload this private data to GitHub.
+
+Copy the export folder to a private location on the server **outside the repository**, for example `/home/rasta/gallery-export/` if `rasta` owns the checkout. Replace paths, username, and host as appropriate. Stop the bot's systemd service (or manual bot process) before updating; it must restart with the new code to deliver imported results. Then, as the checkout owner, run from the repo:
+
+```sh
+cd /home/rasta/gallery
+git pull --ff-only
+set -a
+. ./.env
+set +a
+.venv/bin/python -m gallery.backfill --dry-run /home/rasta/gallery-export/result.json
+.venv/bin/python -m gallery.backfill /home/rasta/gallery-export/result.json
+```
+
+The dry run checks the channel ID and counts files before indexing. The import is resumable, skips ready posts, and repairs pending or failed ones; it does not repost to the channel. Restart the bot service after import. Each indexed older result is delivered to a member with Telegram's `copyMessage`, so the bot must still be a channel admin and the source posts must remain in the channel and permit copying. Test with one known older photo after import. If a source post is deleted, the bot cannot deliver it by copying. Exported media can be removed from the server after verifying results; keep your own backup if needed. The bot continues indexing new posts automatically while it runs.
 
 ## Always-on operation and CI/CD
 
