@@ -37,11 +37,20 @@ class Telegram:
                 # Requests exceptions include the token-bearing URL. Never log it.
                 raise TransientTelegramError(f"Telegram {method} request failed") from None
             if response.status_code == 429:
-                time.sleep(min(response.json().get("parameters", {}).get("retry_after", 2), 30))
+                try:
+                    retry_after = int(response.json().get("parameters", {}).get("retry_after", 2))
+                except (ValueError, TypeError):
+                    retry_after = 2
+                time.sleep(max(1, min(retry_after, 30)))
                 continue
+            if response.status_code >= 500:
+                raise TransientTelegramError(f"Telegram {method} returned HTTP {response.status_code}")
             if response.status_code >= 400:
                 raise RuntimeError(f"Telegram {method} returned HTTP {response.status_code}")
-            payload = response.json()
+            try:
+                payload = response.json()
+            except ValueError:
+                raise TransientTelegramError(f"Telegram {method} returned invalid JSON") from None
             if not payload.get("ok"):
                 raise RuntimeError(f"Telegram {method}: {payload.get('description')}")
             return payload["result"]
@@ -237,12 +246,15 @@ class GalleryBot:
                 self.search(user_id, vector)
 
     def run(self):
+        if self.tg.call("getWebhookInfo").get("url"):
+            raise RuntimeError("A Telegram webhook is configured; remove it before using long polling")
         LOG.info("Starting bot for channel %s", self.channel_id)
         while True:
             try:
                 # Queue updates durably before doing slower image processing.
+                poll_timeout = 1 if self.store.pending_asset() else 20
                 updates = self.tg.call("getUpdates", {
-                    "offset": self.store.get_offset(), "timeout": 5, "limit": 100,
+                    "offset": self.store.get_offset(), "timeout": poll_timeout, "limit": 100,
                     "allowed_updates": '["message","channel_post","callback_query"]',
                 })
                 for update in updates:

@@ -38,4 +38,4 @@ jobs:
           DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
         run: |
           ssh -o StrictHostKeyChecking=yes "$DEPLOY_USER@$DEPLOY_HOST" \
-            'cd ~/event-gallery && git pull --ff-only && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m gallery.models && sudo systemctl restart event-gallery'
+            'cd /opt/gallery && git pull --ff-only && .venv/bin/pip install -r requirements.txt && .venv/bin/python -m gallery.models && sudo -n /usr/bin/systemctl restart gallery-bot.service'

@@ -1,6 +1,6 @@
-# Framefinder — local event photo search
+# Framefinder — event photo search
 
-The current MVP runs on your computer. Open a browser, upload event photos by hand, and search them with a one-person selfie. If the selfie does not work, browse detected faces and select yours. The interface shows matching photos and lets you open the original files. No Telegram bot token, cloud account, or server is needed for this version.
+Framefinder has two separate modes: a local browser MVP for hand-uploaded photos, and an always-on Telegram bot that indexes new posts in a private event channel. Both support selfie search and a browse-faces fallback. [Server deployment instructions](deploy/README.md) cover the Telegram bot.
 
 ## Run the local MVP
 
@@ -19,9 +19,9 @@ The app binds to `127.0.0.1`, so it is not available to other computers. It save
 
 Run tests with `.venv/bin/python -m unittest discover -s tests -v`. To change the local port, set `PORT` before starting the app. To change where photos are stored, set `DATA_DIR`; the local library is created in its `local/` subdirectory.
 
-## Optional Telegram bot prototype
+## Telegram bot
 
-The optional bot prototype watches one private Telegram channel. It indexes each new photo's faces, lets a channel member send a single-person selfie, and returns likely matching channel photos. If the selfie misses, `/faces` shows pages of detected face groups; tapping a face searches for similar photos. `/allfaces` includes every detected face when grouping is wrong. `/more` pages through results and `/status` shows indexing progress.
+The bot watches one private Telegram channel. It indexes each new photo's faces, lets a channel member send a single-person selfie, and returns likely matching channel photos. If the selfie misses, `/faces` shows pages of detected face groups; tapping a face searches for similar photos. `/allfaces` includes every detected face when grouping is wrong. `/more` pages through results and `/status` shows indexing progress.
 
 The bot stores face descriptors, small face thumbnails, Telegram file IDs, and post times in SQLite. It does not save downloaded photos or selfies locally; the images sent through Telegram remain subject to Telegram's own retention. It does not verify that a selfie or selected face belongs to the person asking; any channel member can search the event collection. Tell attendees about this before rollout, and keep the channel private.
 
@@ -56,37 +56,9 @@ Immich is excellent when you also want a full photo library: it groups faces and
 
 For a large initial batch, post images to the channel in batches while the bot is running. Bot API updates do not provide arbitrary old channel history: images posted before the bot became admin must be posted again. Normal Telegram photos are compressed and may lose original EXIF data. Post as image documents if you want to preserve original metadata for a future time or location feature, while keeping each image below the Bot API's [20 MB download limit](https://core.telegram.org/bots/api#getfile). This version uses channel post time. Oversized or unreadable posts appear in `/status` as failed; inspect service logs and repost a smaller image. The database persists across restarts; back it up regularly.
 
-## Free server option
+## Always-on server and GitHub CI/CD
 
-A home laptop, desktop, or spare machine can run this long-polling bot without a public IP, as long as it remains on and can reach Telegram. This is the quickest way to run the current code from Iran. GitHub Actions alone cannot act as its always-on host.
-
-For users who are eligible, an [Oracle Cloud Always Free Ampere A1 VM](https://docs.oracle.com/en-us/iaas/Content/FreeTier/freetier_topic-Always_Free_Resources.htm) can provide up to 2 OCPUs and 12 GB RAM, subject to capacity. Its 200 GB Always Free block storage includes the boot volume. However, [Oracle says its cloud services cannot be accessed from Iran](https://www.oracle.com/corporate/security-practices/corporate/governance/global-trade-compliance/), so this is not an applicable option for an Iran-based deployment. Another provider's lawful free VM can use the same Linux setup if it has persistent storage and outbound Telegram access.
-
-### Cloudflare and Vercel
-
-[Cloudflare Workers Free](https://developers.cloudflare.com/workers/platform/limits/) can receive Telegram webhooks, and [D1](https://developers.cloudflare.com/d1/platform/pricing/) can hold a modest face index. Its 10 ms CPU and 128 MB memory limits do not fit this OpenCV recognition code. [Cloudflare Containers](https://developers.cloudflare.com/containers/platform/pricing/) can run heavier code, but require the paid Workers plan.
-
-[Vercel Hobby](https://vercel.com/docs/functions/limitations) is a plausible all-cloud pilot: Python Functions have up to 2 GB RAM and, with Fluid Compute, up to five minutes per invocation. Pairing a Telegram webhook with an external persistent database such as [Neon](https://vercel.com/docs/postgres) could remove the need for an always-on VM. The current bot cannot be deployed there unchanged: it uses long polling and a local SQLite file, while [Vercel's function filesystem is read-only except for temporary scratch space](https://vercel.com/docs/functions/runtimes/). Webhook processing, durable storage, background indexing, and the model bundle would need to be built and tested. Vercel's free Hobby plan is for [non-commercial personal use](https://vercel.com/docs/plans/hobby); check account availability and terms for your situation before relying on it.
-
-On an Ubuntu VM (when one is available):
-
-1. Create a VM, choose an SSH key, and allow outbound HTTPS. You do not need to open an inbound HTTP port for this polling bot.
-2. Install Git, Python 3, and Python's `venv` package. Clone your GitHub repository to `/home/ubuntu/event-gallery` and perform the local setup above there. For a private repository, configure a read-only GitHub deploy key on the VM.
-3. Set `.env` as above. Create `data/` and ensure `ubuntu` owns it. Install [deploy/event-gallery.service](deploy/event-gallery.service) at `/etc/systemd/system/event-gallery.service`. If your VM username or checkout path differs, edit that unit first.
-4. Run `sudo systemctl daemon-reload`, `sudo systemctl enable --now event-gallery`, and `sudo journalctl -u event-gallery -f` to verify startup. Back up `data/gallery.sqlite3` (including its SQLite WAL files, or use SQLite's backup command) to private storage.
-
-## GitHub CI/CD
-
-[The workflow](.github/workflows/ci.yml) runs unit tests and Python compilation on pushes and pull requests. On `main`, it can deploy to the VM after tests pass. Create a dedicated SSH key for Actions, put its public key in `/home/ubuntu/.ssh/authorized_keys`, and add these repository secrets:
-
-| Secret | Value |
-| --- | --- |
-| `DEPLOY_HOST` | VM IP or hostname |
-| `DEPLOY_USER` | `ubuntu` or your VM username |
-| `DEPLOY_SSH_KEY` | Dedicated private SSH key for Actions |
-| `DEPLOY_HOST_KEY` | The verified `known_hosts` line for that VM |
-
-Add repository variable `DEPLOY_ENABLED=true` when ready. The deployment command pulls `main`, installs dependencies, checks models, and restarts the service. Allow the deployment user to run only `systemctl restart event-gallery` without a password through a narrow sudoers entry. Keep `.env`, `data/`, and `models/` off GitHub; they are ignored by this repository. The server needs network access to Telegram, PyPI, GitHub, and the OpenCV model host during setup.
+Use the step-by-step [Ubuntu/Debian server guide](deploy/README.md). It installs the bot as an unprivileged systemd service using long polling, so no public HTTP port is needed. [GitHub Actions](.github/workflows/ci.yml) tests every push; its deployment job remains disabled until you provide a dedicated SSH deploy key and set `DEPLOY_ENABLED=true` as explained in the guide. The bot token stays on the server, not in GitHub.
 
 ## Boundaries and next version
 
