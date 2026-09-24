@@ -4,12 +4,10 @@ Framefinder has two separate modes: a local browser MVP for hand-uploaded photos
 
 ## Run the local MVP
 
-Install Python 3.10 or newer, then from the repository directory run:
+Install Python 3.9 or newer, then from the repository directory run the user-neutral setup script:
 
 ```sh
-python3 -m venv .venv
-.venv/bin/pip install -r requirements.txt
-.venv/bin/python -m gallery.models
+./setup.sh
 .venv/bin/python -m gallery.web
 ```
 
@@ -32,15 +30,7 @@ Immich is excellent when you also want a full photo library: it groups faces and
 ## Set up the Telegram bot locally
 
 1. In Telegram, create a bot with **@BotFather**. Create a private event channel and add the bot as an administrator. The admin role lets it receive channel posts and reliably check membership.
-2. Install Python 3.10 or newer and run:
-
-   ```sh
-   python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
-   .venv/bin/python -m gallery.models
-   cp .env.example .env
-   chmod 600 .env
-   ```
+2. Install Python 3.9 or newer and run `./setup.sh`. It prepares the virtual environment and models and creates a private `.env` template if needed.
 
 3. Set `BOT_TOKEN` in `.env`. Publish one new test photo in the channel. Load `.env` with the commands below, then run `.venv/bin/python -m gallery.channel_id` to print the channel's numeric ID. Put it in `CHANNEL_ID`.
 4. Start the bot with the environment loaded:
@@ -56,9 +46,9 @@ Immich is excellent when you also want a full photo library: it groups faces and
 
 For a large initial batch, post images to the channel in batches while the bot is running. Bot API updates do not provide arbitrary old channel history: images posted before the bot became admin must be posted again. Normal Telegram photos are compressed and may lose original EXIF data. Post as image documents if you want to preserve original metadata for a future time or location feature, while keeping each image below the Bot API's [20 MB download limit](https://core.telegram.org/bots/api#getfile). This version uses channel post time. Oversized or unreadable posts appear in `/status` as failed; inspect service logs and repost a smaller image. The database persists across restarts; back it up regularly.
 
-## Always-on server and GitHub CI/CD
+## Always-on server and GitHub CI
 
-Use the step-by-step [Ubuntu/Debian server guide](deploy/README.md). It installs the bot as an unprivileged systemd service using long polling, so no public HTTP port is needed. [GitHub Actions](.github/workflows/ci.yml) tests every push; its deployment job remains disabled until you provide a dedicated SSH deploy key and set `DEPLOY_ENABLED=true` as explained in the guide. The bot token stays on the server, not in GitHub.
+Use the [server preparation guide](deploy/README.md). `setup.sh` only prepares the checkout owned by the user who runs it: it installs Python dependencies and face models, runs tests, and creates a private `.env` template if needed. It does not create accounts, install OS packages, or configure systemd. [GitHub Actions](.github/workflows/ci.yml) tests every push; automatic deployment will be configured after the server account and service layout are chosen. The bot token stays on the server, not in GitHub.
 
 ## Boundaries and next version
 
