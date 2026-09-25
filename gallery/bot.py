@@ -174,12 +174,13 @@ class GalleryBot:
                 sent = self.tg.call("sendMediaGroup", data, files)
             else:
                 sent = self.tg.call("sendMediaGroup", data)
-            if isinstance(sent, list) and len(sent) == len(assets):
-                for asset, message in zip(assets, sent):
-                    if asset["media_type"] == "copy" and not asset["album_file_id"]:
-                        item = message.get("photo", [{}])[-1] if asset["album_type"] == "photo" else message.get("document", {})
-                        if item.get("file_id"):
-                            self.store.cache_album_file_id(asset["id"], item["file_id"])
+            if not isinstance(sent, list) or len(sent) != len(assets):
+                raise RuntimeError("Telegram returned an incomplete album")
+            for asset, message in zip(assets, sent):
+                if asset["media_type"] == "copy" and not asset["album_file_id"]:
+                    item = message.get("photo", [{}])[-1] if asset["album_type"] == "photo" else message.get("document", {})
+                    if item.get("file_id"):
+                        self.store.cache_album_file_id(asset["id"], item["file_id"])
 
     def send_one_result(self, user_id: int, asset) -> None:
         if asset["media_type"] == "copy":
@@ -207,11 +208,7 @@ class GalleryBot:
         else:
             self.tg.call("sendDocument", {"chat_id": user_id, "document": asset["file_id"]})
 
-    def send_results(self, user_id: int):
-        ids, remaining = self.store.result_page(user_id)
-        if not ids:
-            self.tg.text(user_id, "No more matching photos. Send another selfie or use /faces.")
-            return
+    def send_assets(self, user_id: int, ids: list[int], advance: bool = False) -> None:
         assets = [self.store.asset(asset_id) for asset_id in ids]
         position = 0
         while position < len(assets):
@@ -222,22 +219,51 @@ class GalleryBot:
                     end += 1
             if end - position >= 2:
                 self.send_album(user_id, assets[position:end])
-                self.store.advance_results(user_id, end - position)
             else:
                 self.send_one_result(user_id, assets[position])
-                self.store.advance_results(user_id, 1)
+            self.store.record_sent(user_id, ids[position:end], advance=advance)
             position = end
             time.sleep(1.05)
+
+    def send_results(self, user_id: int):
+        ids, remaining = self.store.result_page(user_id)
+        if not ids:
+            self.tg.text(user_id, "No more matching photos. Use /update to check for newly indexed photos, or send another selfie.")
+            return
+        self.send_assets(user_id, ids, advance=True)
         self.tg.text(user_id, f"{remaining} more photos. Send /more to continue." if remaining else
-                     "That's all the matching photos.")
+                     "That's all the matching photos. Use /update later to check for newly indexed photos.")
+
+    def send_updates(self, user_id: int) -> None:
+        vector = self.store.query_vector(user_id)
+        if vector is None:
+            self.tg.text(user_id, "Send a selfie or choose a face with /faces first, then use /update later.")
+            return
+        known = self.store.known_results(user_id)
+        sent = self.store.sent_asset_ids(user_id)
+        new_ids = [asset_id for asset_id in self.store.matching_assets(vector, self.threshold)
+                   if asset_id not in known and asset_id not in sent]
+        if not new_ids:
+            self.tg.text(user_id, "No newly indexed matching photos yet. Try /update again later.")
+            return
+        page = new_ids[:10]
+        self.send_assets(user_id, page)
+        remaining = len(new_ids) - len(page)
+        self.tg.text(user_id, f"{remaining} new matching photos remain. Send /update again." if remaining else
+                     "That's all the newly indexed matching photos. Use /update later to check again.")
 
     def search(self, user_id: int, vector):
-        ids = self.store.matching_assets(vector, self.threshold)
-        if not ids:
-            self.tg.text(user_id, "No confident matches yet. Try another clear selfie, or choose a face with /faces.")
+        all_ids = self.store.matching_assets(vector, self.threshold)
+        sent = self.store.sent_asset_ids(user_id)
+        ids = [asset_id for asset_id in all_ids if asset_id not in sent]
+        self.store.save_results(user_id, ids, vector)
+        if not all_ids:
+            self.tg.text(user_id, "No confident matches yet. Try another clear selfie, choose a face with /faces, or use /update later.")
             self.show_faces(user_id, 0)
             return
-        self.store.save_results(user_id, ids)
+        if not ids:
+            self.tg.text(user_id, "You've already received the matching photos. Use /update later or /reset-history to see them again.")
+            return
         self.tg.text(user_id, f"Found {len(ids)} possible photos. Face matching can make mistakes.")
         self.send_results(user_id)
 
@@ -285,17 +311,23 @@ class GalleryBot:
         words = message.get("text", "").split(maxsplit=1)
         command = words[0].split("@", 1)[0] if words else ""
         if command in {"/start", "/help"}:
-            self.tg.text(user_id, "Send one clear selfie to find your photos. If that misses, use /faces to choose your face. Use /more for additional results.")
+            self.tg.text(user_id, "Send one clear selfie to find your photos. If that misses, use /faces to choose your face. Use /more for additional results, /update for newly indexed photos, or /reset-history to see sent photos again.")
         elif command == "/faces":
             self.show_faces(user_id, 0)
         elif command == "/allfaces":
             self.show_faces(user_id, 0, all_faces=True)
         elif command == "/more":
             self.send_results(user_id)
+        elif command == "/update":
+            self.send_updates(user_id)
+        elif command == "/reset-history":
+            self.store.reset_history(user_id)
+            self.tg.text(user_id, "History cleared. Send /update to receive matching photos again, or send a new selfie.")
         elif command == "/status":
             total, ready, failed = self.store.stats()
             self.tg.text(user_id, f"Channel photos: {total}; indexed: {ready}; failed: {failed}.")
         elif message.get("photo") or message.get("document", {}).get("mime_type", "").startswith("image/"):
+            self.store.reset_history(user_id, clear_query=True)
             file_id = (message["photo"][-1]["file_id"] if message.get("photo")
                        else message["document"]["file_id"])
             try:

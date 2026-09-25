@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import sqlite3
 from pathlib import Path
 
@@ -44,13 +45,22 @@ class Store:
             CREATE TABLE IF NOT EXISTS sessions (
                 user_id INTEGER PRIMARY KEY,
                 results TEXT NOT NULL DEFAULT '[]',
-                next_result INTEGER NOT NULL DEFAULT 0
+                next_result INTEGER NOT NULL DEFAULT 0,
+                query_vector BLOB
+            );
+            CREATE TABLE IF NOT EXISTS sent_assets (
+                user_id INTEGER NOT NULL,
+                asset_id INTEGER NOT NULL,
+                PRIMARY KEY (user_id, asset_id)
             );
         """)
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(assets)")}
         for name in ("album_name", "album_type", "album_file_id"):
             if name not in columns:
                 self.db.execute(f"ALTER TABLE assets ADD COLUMN {name} TEXT")
+        session_columns = {row[1] for row in self.db.execute("PRAGMA table_info(sessions)")}
+        if "query_vector" not in session_columns:
+            self.db.execute("ALTER TABLE sessions ADD COLUMN query_vector BLOB")
 
     def get_offset(self) -> int:
         row = self.db.execute("SELECT value FROM settings WHERE key='update_offset'").fetchone()
@@ -165,15 +175,40 @@ class Store:
     def asset(self, asset_id: int):
         return self.db.execute("SELECT * FROM assets WHERE id=?", (asset_id,)).fetchone()
 
-    def save_results(self, user_id: int, asset_ids: list[int]) -> None:
-        import json
+    def save_results(self, user_id: int, asset_ids: list[int],
+                     query: np.ndarray | None = None) -> None:
+        vector = query.astype(np.float32).tobytes() if query is not None else None
         with self.db:
-            self.db.execute("""INSERT INTO sessions (user_id, results, next_result)
-                VALUES (?, ?, 0) ON CONFLICT(user_id) DO UPDATE SET
-                results=excluded.results, next_result=0""", (user_id, json.dumps(asset_ids)))
+            self.db.execute("""INSERT INTO sessions (user_id, results, next_result, query_vector)
+                VALUES (?, ?, 0, ?) ON CONFLICT(user_id) DO UPDATE SET
+                results=excluded.results, next_result=0,
+                query_vector=COALESCE(excluded.query_vector, sessions.query_vector)""",
+                            (user_id, json.dumps(asset_ids), vector))
+
+    def query_vector(self, user_id: int) -> np.ndarray | None:
+        row = self.db.execute("SELECT query_vector FROM sessions WHERE user_id=?", (user_id,)).fetchone()
+        if not row or row[0] is None:
+            return None
+        return np.frombuffer(row[0], dtype=np.float32)
+
+    def known_results(self, user_id: int) -> set[int]:
+        row = self.db.execute("SELECT results FROM sessions WHERE user_id=?", (user_id,)).fetchone()
+        return set(json.loads(row[0])) if row else set()
+
+    def sent_asset_ids(self, user_id: int) -> set[int]:
+        rows = self.db.execute("SELECT asset_id FROM sent_assets WHERE user_id=?", (user_id,))
+        return {row[0] for row in rows}
+
+    def reset_history(self, user_id: int, clear_query: bool = False) -> None:
+        with self.db:
+            self.db.execute("DELETE FROM sent_assets WHERE user_id=?", (user_id,))
+            self.db.execute("""INSERT INTO sessions (user_id, results, next_result, query_vector)
+                VALUES (?, '[]', 0, NULL) ON CONFLICT(user_id) DO UPDATE SET
+                results='[]', next_result=0,
+                query_vector=CASE WHEN ? THEN NULL ELSE sessions.query_vector END""",
+                            (user_id, clear_query))
 
     def result_page(self, user_id: int, page_size: int = 10) -> tuple[list[int], int]:
-        import json
         row = self.db.execute("SELECT results, next_result FROM sessions WHERE user_id=?", (user_id,)).fetchone()
         if not row:
             return [], 0
@@ -185,6 +220,14 @@ class Store:
         with self.db:
             self.db.execute("UPDATE sessions SET next_result=next_result+? WHERE user_id=?",
                             (count, user_id))
+
+    def record_sent(self, user_id: int, asset_ids: list[int], advance: bool = False) -> None:
+        with self.db:
+            self.db.executemany("INSERT OR IGNORE INTO sent_assets (user_id, asset_id) VALUES (?, ?)",
+                                ((user_id, asset_id) for asset_id in asset_ids))
+            if advance:
+                self.db.execute("UPDATE sessions SET next_result=next_result+? WHERE user_id=?",
+                                (len(asset_ids), user_id))
 
     def stats(self) -> tuple[int, int, int]:
         row = self.db.execute("""SELECT COUNT(*), SUM(status='ready'), SUM(status='failed')

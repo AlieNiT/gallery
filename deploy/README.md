@@ -52,6 +52,8 @@ The dry run checks the channel ID and counts files before indexing. The import i
 
 If the channel was already backfilled by an older version, stop the bot and rerun the same `gallery.backfill` command after updating. It will **not** re-index ready photos; it will prepare their album media in `data/album-media/`. Then restart the bot. Keep the Telegram Desktop export until this preparation succeeds.
 
+The bot automatically adds per-user sent history and saved-query fields to an existing SQLite database on startup. Back up `data/gallery.sqlite3` before upgrading. Histories cannot include photos delivered before this version; each member should send a fresh selfie or choose a face once before using `/update`. New images reset that member's history, and `/reset-history` clears it while retaining the current face query.
+
 ## Always-on operation and CI/CD
 
 The user-neutral checkout setup intentionally stops before installing a service. Once the server account and checkout path are chosen, configure a systemd service for that account, enable it at boot, and keep its token file private. That service should run `.venv/bin/python -m gallery.bot` from the checkout directory. Do not run both the manual process and the service at once.
