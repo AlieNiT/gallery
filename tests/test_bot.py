@@ -6,7 +6,7 @@ from unittest.mock import patch
 
 import numpy as np
 
-from gallery.bot import GalleryBot, TransientTelegramError
+from gallery.bot import GalleryBot, TransientTelegramError, parse_extra_allowed_user_ids
 from gallery.faces import Face
 
 
@@ -57,6 +57,54 @@ class BotFlowTest(unittest.TestCase):
             self.assertEqual(bot.tg.sent_photos, [(42, "large")])
             self.assertEqual(bot.store.stats(), (1, 1, 0))
             bot.store.db.close()
+
+    def test_extra_allowed_user_bypasses_membership_for_messages_and_buttons(self):
+        with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine"):
+            bot = GalleryBot("unused", -100, Path(directory), Path(directory), 0.45,
+                             frozenset({42}))
+            checked_users = []
+            messages = []
+            def fake_call(method, data=None, files=None):
+                if method == "getChatMember":
+                    checked_users.append(data["user_id"])
+                    return {"status": "member" if data["user_id"] == 43 else "left"}
+                if method == "answerCallbackQuery":
+                    return True
+                raise AssertionError(method)
+            bot.tg.call = fake_call
+            bot.tg.text = lambda _user_id, message: messages.append(message)
+            shown = []
+            bot.show_faces = lambda user_id, page: shown.append((user_id, page))
+            bot.handle_message(self.private_message(42, text="/start"))
+            bot.handle_callback({"id": "callback", "from": {"id": 42}, "data": "f:0"})
+            bot.handle_message(self.private_message(43, text="/start"))
+            bot.handle_message(self.private_message(44, text="/start"))
+            self.assertEqual(shown, [(42, 0)])
+            self.assertEqual(checked_users, [43, 44])
+            self.assertIn("Send one clear selfie", messages[0])
+            self.assertIn("Join the private event channel", messages[-1])
+            bot.store.db.close()
+
+    def test_extra_allowed_nonmember_can_receive_matching_photo(self):
+        face = Face(np.array([1, 0], dtype=np.float32), b"thumb")
+        with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine") as engine_class:
+            engine_class.return_value.extract.return_value = [face]
+            bot = GalleryBot("unused", -100, Path(directory), Path(directory), 0.45,
+                             frozenset({42}))
+            bot.tg = FakeTelegram()
+            bot.tg.call = lambda *_: (_ for _ in ()).throw(AssertionError("Membership must not be checked"))
+            self.matching_photo(bot, 1, face)
+            with patch("gallery.bot.time.sleep"):
+                bot.handle_message(self.private_message(42, photo=[{"file_id": "selfie"}]))
+            self.assertEqual(bot.tg.sent_photos, [(42, "photo-1")])
+            bot.store.db.close()
+
+    def test_extra_allowed_user_ids_must_be_positive_numeric_ids(self):
+        self.assertEqual(parse_extra_allowed_user_ids(""), frozenset())
+        self.assertEqual(parse_extra_allowed_user_ids(" 42, 43,42 "), frozenset({42, 43}))
+        for invalid in ("0", "-42", "alice", "42,,43", "42,", "۴۲"):
+            with self.subTest(value=invalid), self.assertRaises(ValueError):
+                parse_extra_allowed_user_ids(invalid)
 
     def test_temporary_download_failure_keeps_photo_queued(self):
         with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine"):

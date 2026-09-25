@@ -22,6 +22,19 @@ LOG = logging.getLogger(__name__)
 MAX_DOWNLOAD = 20 * 1024 * 1024
 
 
+def parse_extra_allowed_user_ids(value: str) -> frozenset[int]:
+    """Parse optional comma-separated Telegram user IDs; fail closed on typos."""
+    if not value.strip():
+        return frozenset()
+    user_ids = set()
+    for entry in value.split(","):
+        entry = entry.strip()
+        if not entry.isascii() or not entry.isdecimal() or int(entry) <= 0:
+            raise ValueError("EXTRA_ALLOWED_USER_IDS must contain positive numeric user IDs separated by commas")
+        user_ids.add(int(entry))
+    return frozenset(user_ids)
+
+
 class TransientTelegramError(RuntimeError):
     """An API or network failure that should be retried without dropping a photo."""
 
@@ -96,15 +109,19 @@ class Telegram:
 
 class GalleryBot:
     def __init__(self, token: str, channel_id: int, data_dir: Path,
-                 model_dir: Path, threshold: float):
+                 model_dir: Path, threshold: float,
+                 extra_allowed_user_ids: frozenset[int] | None = None):
         self.tg = Telegram(token)
         self.channel_id = channel_id
+        self.extra_allowed_user_ids = extra_allowed_user_ids or frozenset()
         self.data_dir = data_dir
         self.store = Store(data_dir / "gallery.sqlite3")
         self.engine = FaceEngine(model_dir)
         self.threshold = threshold
 
-    def is_member(self, user_id: int) -> bool:
+    def has_access(self, user_id: int) -> bool:
+        if user_id in self.extra_allowed_user_ids:
+            return True
         try:
             member = self.tg.call("getChatMember", {"chat_id": self.channel_id, "user_id": user_id})
             return member["status"] in {"creator", "administrator", "member"} or (
@@ -305,7 +322,7 @@ class GalleryBot:
         if message["chat"]["type"] != "private":
             return
         user_id = message["from"]["id"]
-        if not self.is_member(user_id):
+        if not self.has_access(user_id):
             self.tg.text(user_id, "Join the private event channel first, then try again.")
             return
         words = message.get("text", "").split(maxsplit=1)
@@ -347,7 +364,7 @@ class GalleryBot:
     def handle_callback(self, callback: dict):
         user_id = callback["from"]["id"]
         self.tg.call("answerCallbackQuery", {"callback_query_id": callback["id"]})
-        if not self.is_member(user_id):
+        if not self.has_access(user_id):
             self.tg.text(user_id, "Join the private event channel first, then try again.")
             return
         data = callback.get("data", "")
@@ -400,7 +417,8 @@ def main():
     threshold = float(os.getenv("MATCH_THRESHOLD", "0.45"))
     if not 0 < threshold < 1:
         raise ValueError("MATCH_THRESHOLD must be between 0 and 1")
-    GalleryBot(token, channel_id, data_dir, model_dir, threshold).run()
+    extra_allowed_user_ids = parse_extra_allowed_user_ids(os.getenv("EXTRA_ALLOWED_USER_IDS", ""))
+    GalleryBot(token, channel_id, data_dir, model_dir, threshold, extra_allowed_user_ids).run()
 
 
 if __name__ == "__main__":

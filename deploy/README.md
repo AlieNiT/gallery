@@ -19,7 +19,7 @@ cd gallery
 
 The script creates `.venv/`, installs requirements, downloads and verifies the OpenCV face models in `models/`, runs the tests, and creates a mode-0600 `.env` from `.env.example` only if one does not already exist. It preserves an existing `.env`. All these paths are inside the checkout and ignored by Git where appropriate.
 
-Edit `.env` with the **new** `BOT_TOKEN`, `CHANNEL_ID=0`, and paths appropriate to this checkout (`DATA_DIR=./data`, `MODEL_DIR=./models` work when starting from the checkout). Then, with the bot added as channel admin, stop any old bot process and run:
+Edit `.env` with the **new** `BOT_TOKEN`, `CHANNEL_ID=0`, and paths appropriate to this checkout (`DATA_DIR=./data`, `MODEL_DIR=./models` work when starting from the checkout). Optional `EXTRA_ALLOWED_USER_IDS` is a comma-separated list of **numeric Telegram user IDs** that may use the bot without joining the channel, for example `EXTRA_ALLOWED_USER_IDS=123456789,987654321`. Leave it empty to require channel membership for everyone. These users can browse faces and receive photos, so grant access only with the event organizers' consent; they do not gain membership or access to the channel itself. Private-channel post links would not work for them; the bot must send actual media. After changing `.env`, restart the bot service. Then, with the bot added as channel admin, stop any old bot process and run:
 
 ```sh
 set -a
@@ -60,4 +60,4 @@ The user-neutral checkout setup intentionally stops before installing a service.
 
 [GitHub Actions](../.github/workflows/ci.yml) currently runs tests and shell syntax checks on every push. Automatic deployment is not configured yet; it will be added after the service account, checkout path, and SSH key are finalized. No server credential or bot token is required for CI.
 
-Any channel member can browse detected faces or search with someone else's photo. This is **not identity verification**. Tell attendees, obtain consent, and keep the channel private. Face matching is approximate; start with a small consented batch and tune `MATCH_THRESHOLD` if needed.
+Any channel member or explicitly allowed user can browse detected faces or search with someone else's photo. This is **not identity verification**. Tell attendees, obtain consent, and keep the channel private. Face matching is approximate; start with a small consented batch and tune `MATCH_THRESHOLD` if needed.

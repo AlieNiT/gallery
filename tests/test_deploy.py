@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
-from gallery.bot import GalleryBot, Telegram, TransientTelegramError
+from gallery.bot import GalleryBot, Telegram, TransientTelegramError, main as bot_main
 from gallery.check import main as check_main
 
 
@@ -42,6 +42,14 @@ class TelegramTransportTest(unittest.TestCase):
 
 
 class DeploymentCheckTest(unittest.TestCase):
+    @patch("gallery.bot.GalleryBot")
+    def test_bot_reads_extra_allowed_user_ids_from_environment(self, bot_class):
+        with patch.dict(os.environ, {"BOT_TOKEN": "secret", "CHANNEL_ID": "-100123",
+                                  "EXTRA_ALLOWED_USER_IDS": "42,43"}):
+            bot_main()
+        self.assertEqual(bot_class.call_args.args[-1], frozenset({42, 43}))
+        bot_class.return_value.run.assert_called_once_with()
+
     @patch("gallery.check.Telegram")
     def test_check_preserves_pending_updates_when_removing_webhook(self, telegram_class):
         telegram = telegram_class.return_value
