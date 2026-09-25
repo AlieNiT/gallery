@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 import logging
+import json
+import mimetypes
 import os
 import time
+from contextlib import ExitStack
 from io import BytesIO
 from pathlib import Path
 
@@ -31,8 +34,14 @@ class Telegram:
 
     def call(self, method: str, data=None, files=None):
         for _ in range(3):
+            # A rate-limited multipart request must resend the complete files.
+            for value in (files or {}).values():
+                stream = value[1] if isinstance(value, tuple) else value
+                if hasattr(stream, "seek"):
+                    stream.seek(0)
             try:
-                response = self.session.post(f"{self.root}/{method}", data=data, files=files, timeout=45)
+                response = self.session.post(f"{self.root}/{method}", data=data, files=files,
+                                             timeout=120 if files else 45)
             except requests.RequestException:
                 # Requests exceptions include the token-bearing URL. Never log it.
                 raise TransientTelegramError(f"Telegram {method} request failed") from None
@@ -90,6 +99,7 @@ class GalleryBot:
                  model_dir: Path, threshold: float):
         self.tg = Telegram(token)
         self.channel_id = channel_id
+        self.data_dir = data_dir
         self.store = Store(data_dir / "gallery.sqlite3")
         self.engine = FaceEngine(model_dir)
         self.threshold = threshold
@@ -132,21 +142,91 @@ class GalleryBot:
             self.store.mark_failed(asset["id"], str(error))
         return True
 
+    def album_type(self, asset) -> str | None:
+        if asset["media_type"] in {"photo", "document"}:
+            return asset["media_type"]
+        if asset["media_type"] == "copy" and asset["album_name"] and asset["album_type"]:
+            path = self.data_dir / "album-media" / asset["album_name"]
+            if asset["album_file_id"] or path.is_file():
+                return asset["album_type"]
+        return None
+
+    def send_album(self, user_id: int, assets: list) -> None:
+        media = []
+        files = {}
+        with ExitStack() as stack:
+            for index, asset in enumerate(assets):
+                kind = self.album_type(asset)
+                if asset["media_type"] == "copy":
+                    if asset["album_file_id"]:
+                        media.append({"type": kind, "media": asset["album_file_id"]})
+                    else:
+                        name = asset["album_name"]
+                        path = self.data_dir / "album-media" / name
+                        attachment = f"image{index}"
+                        files[attachment] = (name, stack.enter_context(path.open("rb")),
+                                             mimetypes.guess_type(name)[0] or "application/octet-stream")
+                        media.append({"type": kind, "media": f"attach://{attachment}"})
+                else:
+                    media.append({"type": kind, "media": asset["file_id"]})
+            data = {"chat_id": user_id, "media": json.dumps(media)}
+            if files:
+                sent = self.tg.call("sendMediaGroup", data, files)
+            else:
+                sent = self.tg.call("sendMediaGroup", data)
+            if isinstance(sent, list) and len(sent) == len(assets):
+                for asset, message in zip(assets, sent):
+                    if asset["media_type"] == "copy" and not asset["album_file_id"]:
+                        item = message.get("photo", [{}])[-1] if asset["album_type"] == "photo" else message.get("document", {})
+                        if item.get("file_id"):
+                            self.store.cache_album_file_id(asset["id"], item["file_id"])
+
+    def send_one_result(self, user_id: int, asset) -> None:
+        if asset["media_type"] == "copy":
+            kind = self.album_type(asset)
+            if kind:
+                method = "sendPhoto" if kind == "photo" else "sendDocument"
+                field = "photo" if kind == "photo" else "document"
+                if asset["album_file_id"]:
+                    self.tg.call(method, {"chat_id": user_id, field: asset["album_file_id"]})
+                else:
+                    name = asset["album_name"]
+                    path = self.data_dir / "album-media" / name
+                    with path.open("rb") as stream:
+                        sent = self.tg.call(method, {"chat_id": user_id},
+                                            {field: (name, stream,
+                                                     mimetypes.guess_type(name)[0] or "application/octet-stream")})
+                    item = sent.get("photo", [{}])[-1] if kind == "photo" else sent.get("document", {})
+                    if item.get("file_id"):
+                        self.store.cache_album_file_id(asset["id"], item["file_id"])
+            else:
+                self.tg.call("copyMessage", {"chat_id": user_id, "from_chat_id": asset["channel_id"],
+                                             "message_id": asset["message_id"]})
+        elif asset["media_type"] == "photo":
+            self.tg.photo(user_id, asset["file_id"])
+        else:
+            self.tg.call("sendDocument", {"chat_id": user_id, "document": asset["file_id"]})
+
     def send_results(self, user_id: int):
         ids, remaining = self.store.result_page(user_id)
         if not ids:
             self.tg.text(user_id, "No more matching photos. Send another selfie or use /faces.")
             return
-        for asset_id in ids:
-            asset = self.store.asset(asset_id)
-            if asset["media_type"] == "copy":
-                self.tg.call("copyMessage", {"chat_id": user_id, "from_chat_id": asset["channel_id"],
-                                             "message_id": asset["message_id"]})
-            elif asset["media_type"] == "photo":
-                self.tg.photo(user_id, asset["file_id"])
+        assets = [self.store.asset(asset_id) for asset_id in ids]
+        position = 0
+        while position < len(assets):
+            kind = self.album_type(assets[position])
+            end = position + 1
+            if kind:
+                while end < len(assets) and self.album_type(assets[end]) == kind:
+                    end += 1
+            if end - position >= 2:
+                self.send_album(user_id, assets[position:end])
+                self.store.advance_results(user_id, end - position)
             else:
-                self.tg.call("sendDocument", {"chat_id": user_id, "document": asset["file_id"]})
-            self.store.advance_results(user_id, 1)
+                self.send_one_result(user_id, assets[position])
+                self.store.advance_results(user_id, 1)
+            position = end
             time.sleep(1.05)
         self.tg.text(user_id, f"{remaining} more photos. Send /more to continue." if remaining else
                      "That's all the matching photos.")

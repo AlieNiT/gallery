@@ -26,6 +26,20 @@ class TelegramTransportTest(unittest.TestCase):
         with self.assertRaises(TransientTelegramError):
             telegram.call("getUpdates")
 
+    def test_multipart_retry_rewinds_files(self):
+        telegram = Telegram("sensitive-token")
+        uploaded = []
+        def post(_url, data, files, timeout):
+            uploaded.append(files["image"][1].read())
+            if len(uploaded) == 1:
+                return SimpleNamespace(status_code=429,
+                                       json=lambda: {"parameters": {"retry_after": 1}})
+            return SimpleNamespace(status_code=200, json=lambda: {"ok": True, "result": []})
+        telegram.session.post = post
+        with io.BytesIO(b"complete-image") as image, patch("gallery.bot.time.sleep"):
+            telegram.call("sendMediaGroup", {"chat_id": 42}, {"image": ("image.jpg", image)})
+        self.assertEqual(uploaded, [b"complete-image", b"complete-image"])
+
 
 class DeploymentCheckTest(unittest.TestCase):
     @patch("gallery.check.Telegram")

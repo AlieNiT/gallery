@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import json
 from pathlib import Path
 from unittest.mock import patch
 
@@ -55,6 +56,59 @@ class BotFlowTest(unittest.TestCase):
                 bot.index_one()
             self.assertEqual(bot.store.pending_asset()["message_id"], 7)
             self.assertEqual(bot.store.stats(), (1, 0, 0))
+            bot.store.db.close()
+
+    def test_matching_photos_are_paged_in_albums(self):
+        with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine"):
+            bot = GalleryBot("unused", -100, Path(directory), Path(directory), 0.45)
+            calls = []
+            bot.tg.call = lambda method, data: calls.append((method, data))
+            bot.tg.text = lambda *_: None
+            for number in range(12):
+                bot.store.queue_asset(-100, number + 1, f"photo-{number}", "photo", 100)
+                bot.store.save_faces(bot.store.pending_asset()["id"], [])
+            ids = [row[0] for row in bot.store.db.execute("SELECT id FROM assets ORDER BY id")]
+            bot.store.save_results(42, ids)
+            with patch("gallery.bot.time.sleep"):
+                bot.send_results(42)
+                self.assertEqual(bot.store.result_page(42), (ids[10:], 0))
+                bot.send_results(42)
+            self.assertEqual([name for name, _ in calls], ["sendMediaGroup", "sendMediaGroup"])
+            self.assertEqual([len(json.loads(data["media"])) for _, data in calls], [10, 2])
+            bot.store.db.close()
+
+    def test_failed_album_does_not_advance_results(self):
+        with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine"):
+            bot = GalleryBot("unused", -100, Path(directory), Path(directory), 0.45)
+            for number in range(2):
+                bot.store.queue_asset(-100, number + 1, f"photo-{number}", "photo", 100)
+                bot.store.save_faces(bot.store.pending_asset()["id"], [])
+            ids = [row[0] for row in bot.store.db.execute("SELECT id FROM assets ORDER BY id")]
+            bot.store.save_results(42, ids)
+            bot.tg.call = lambda *_: (_ for _ in ()).throw(TransientTelegramError("offline"))
+            with self.assertRaises(TransientTelegramError):
+                bot.send_results(42)
+            self.assertEqual(bot.store.result_page(42), (ids, 0))
+            bot.store.db.close()
+
+    def test_document_albums_are_separate_from_photos(self):
+        with tempfile.TemporaryDirectory() as directory, patch("gallery.bot.FaceEngine"):
+            bot = GalleryBot("unused", -100, Path(directory), Path(directory), 0.45)
+            calls = []
+            bot.tg.call = lambda method, data: calls.append((method, data))
+            bot.tg.photo = lambda chat_id, file_id: calls.append(("sendPhoto", file_id))
+            bot.tg.text = lambda *_: None
+            for number, kind in enumerate(["photo", "document", "document", "photo"]):
+                bot.store.queue_asset(-100, number + 1, f"file-{number}", kind, 100)
+                bot.store.save_faces(bot.store.pending_asset()["id"], [])
+            ids = [row[0] for row in bot.store.db.execute("SELECT id FROM assets ORDER BY id")]
+            bot.store.save_results(42, ids)
+            with patch("gallery.bot.time.sleep"):
+                bot.send_results(42)
+            self.assertEqual([name for name, _ in calls],
+                             ["sendPhoto", "sendMediaGroup", "sendPhoto"])
+            self.assertEqual([item["type"] for item in json.loads(calls[1][1]["media"])],
+                             ["document", "document"])
             bot.store.db.close()
 
 

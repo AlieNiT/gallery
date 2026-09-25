@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import sqlite3
 from pathlib import Path
 
 import numpy as np
@@ -43,6 +44,23 @@ class StoreTest(unittest.TestCase):
         self.assertEqual(self.store.result_page(42), ([], 0))
         self.store.set_offset(123)
         self.assertEqual(self.store.get_offset(), 123)
+
+    def test_existing_database_gains_album_columns(self):
+        path = Path(self.temporary.name) / "old.sqlite3"
+        with sqlite3.connect(path) as db:
+            db.execute("""CREATE TABLE assets (
+                id INTEGER PRIMARY KEY, channel_id INTEGER NOT NULL,
+                message_id INTEGER NOT NULL, file_id TEXT NOT NULL,
+                media_type TEXT NOT NULL, posted_at INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+                UNIQUE(channel_id, message_id))""")
+        migrated = Store(path)
+        migrated.queue_asset(-100, 7, "file-id", "photo", 100)
+        asset = migrated.pending_asset()
+        self.assertIsNone(asset["album_name"])
+        self.assertIsNone(asset["album_type"])
+        self.assertIsNone(asset["album_file_id"])
+        migrated.db.close()
 
 
 if __name__ == "__main__":

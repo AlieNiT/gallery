@@ -5,6 +5,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
+import tempfile
 from pathlib import Path
 
 from .faces import FaceEngine
@@ -12,10 +14,12 @@ from .store import Store
 
 
 MAX_EXPORTED_IMAGE = 100 * 1024 * 1024
+MAX_ALBUM_DOCUMENT = 50 * 1024 * 1024
+MAX_ALBUM_PHOTO = 10 * 1024 * 1024
 
 
 def exported_posts(export_file: Path, channel_id: int):
-    """Return (message ID, Unix time, image path) from one matching channel export."""
+    """Return (message ID, Unix time, image path, media type) for this channel."""
     root = export_file.resolve().parent
     with export_file.open(encoding="utf-8") as handle:
         export = json.load(handle)
@@ -52,8 +56,34 @@ def exported_posts(export_file: Path, channel_id: int):
         path = (root / relative_path).resolve()
         if not path.is_relative_to(root):
             raise ValueError(f"Image post {message_id} points outside the export folder")
-        posts.append((message_id, posted_at, path))
+        posts.append((message_id, posted_at, path, "photo" if isinstance(photo, str) else "document"))
     return posts
+
+
+def retain_album_media(path: Path, data_dir: Path, channel_id: int,
+                       message_id: int, media_type: str) -> tuple[str, str] | None:
+    """Keep a private copy so an old post can be uploaded in a search-result album."""
+    size = path.stat().st_size
+    if size > MAX_ALBUM_DOCUMENT:
+        return None  # The original channel post can still be copied individually.
+    if media_type == "photo" and size > MAX_ALBUM_PHOTO:
+        media_type = "document"
+    destination_dir = data_dir / "album-media"
+    destination_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    name = f"{abs(channel_id)}_{message_id}{path.suffix.lower()}"
+    destination = destination_dir / name
+    if not destination.is_file() or destination.stat().st_size != size:
+        with tempfile.NamedTemporaryFile(dir=destination_dir, delete=False) as temporary:
+            temporary_path = Path(temporary.name)
+            try:
+                with path.open("rb") as source:
+                    shutil.copyfileobj(source, temporary)
+                temporary.flush()
+                os.fsync(temporary.fileno())
+                os.replace(temporary_path, destination)
+            finally:
+                temporary_path.unlink(missing_ok=True)
+    return name, media_type
 
 
 def backfill(export_file: Path, channel_id: int, data_dir: Path, model_dir: Path,
@@ -61,29 +91,37 @@ def backfill(export_file: Path, channel_id: int, data_dir: Path, model_dir: Path
     posts = exported_posts(export_file, channel_id)
     store = Store(data_dir / "gallery.sqlite3")
     try:
-        todo = [(message_id, posted_at, path) for message_id, posted_at, path in posts
+        todo = [(message_id, posted_at, path, media_type)
+                for message_id, posted_at, path, media_type in posts
                 if not store.has_ready_asset(channel_id, message_id)]
         if dry_run:
             print(f"Export contains {len(posts)} image posts; {len(todo)} are not indexed yet.")
-            print(f"Media files present: {sum(path.is_file() for _, _, path in todo)}/{len(todo)}")
+            print(f"Media files present: {sum(path.is_file() for _, _, path, _ in posts)}/{len(posts)}")
             return 0, len(posts) - len(todo), 0
-        engine = FaceEngine(model_dir)
+        engine = FaceEngine(model_dir) if todo else None
         imported = 0
         failed = 0
-        for message_id, posted_at, path in todo:
+        retained_count = 0
+        for message_id, posted_at, path, media_type in posts:
             try:
                 if not path.is_file():
                     raise FileNotFoundError("media not downloaded in export")
                 if path.stat().st_size > MAX_EXPORTED_IMAGE:
                     raise ValueError("exported image exceeds 100 MB")
-                faces = engine.extract(path.read_bytes())
-                if store.import_exported_asset(channel_id, message_id, posted_at, faces):
-                    imported += 1
-                    print(f"Indexed post {message_id}: {len(faces)} faces")
+                if not store.has_ready_asset(channel_id, message_id):
+                    faces = engine.extract(path.read_bytes())
+                    if store.import_exported_asset(channel_id, message_id, posted_at, faces):
+                        imported += 1
+                        print(f"Indexed post {message_id}: {len(faces)} faces")
+                retained = retain_album_media(path, data_dir, channel_id, message_id, media_type)
+                if retained:
+                    store.attach_album_media(channel_id, message_id, *retained)
+                    retained_count += 1
             except Exception as error:
                 failed += 1
-                print(f"Could not index post {message_id}: {error}")
-        print(f"Done: {imported} indexed, {len(posts) - len(todo)} already present, {failed} failed.")
+                print(f"Could not prepare post {message_id}: {error}")
+        print(f"Done: {imported} indexed, {len(posts) - len(todo)} already indexed, "
+              f"{retained_count} album media ready, {failed} failed.")
         return imported, len(posts) - len(todo), failed
     finally:
         store.db.close()

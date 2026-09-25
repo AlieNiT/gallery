@@ -48,7 +48,9 @@ set +a
 .venv/bin/python -m gallery.backfill /home/rasta/gallery-export/result.json
 ```
 
-The dry run checks the channel ID and counts files before indexing. The import is resumable, skips ready posts, and repairs pending or failed ones; it does not repost to the channel. Restart the bot service after import. Each indexed older result is delivered to a member with Telegram's `copyMessage`, so the bot must still be a channel admin and the source posts must remain in the channel and permit copying. Test with one known older photo after import. If a source post is deleted, the bot cannot deliver it by copying. Exported media can be removed from the server after verifying results; keep your own backup if needed. The bot continues indexing new posts automatically while it runs.
+The dry run checks the channel ID and counts files before indexing. The import is resumable, skips ready posts, repairs pending or failed ones, and does not repost to the channel. It also keeps private copies under `data/album-media/` for album delivery. Restart the bot service after import. Matching photos are sent in albums of up to 10; documents form separate albums. A missing retained file or oversized export is still copied from the original channel post, so keep the bot as channel admin and do not delete those posts. Test with one known older photo after import. Exported media can be removed from the server after verifying results, but back up `data/` because it now contains retained images as well as the database. The bot continues indexing new posts automatically while it runs.
+
+If the channel was already backfilled by an older version, stop the bot and rerun the same `gallery.backfill` command after updating. It will **not** re-index ready photos; it will prepare their album media in `data/album-media/`. Then restart the bot. Keep the Telegram Desktop export until this preparation succeeds.
 
 ## Always-on operation and CI/CD
 

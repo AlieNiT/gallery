@@ -27,6 +27,9 @@ class Store:
                 posted_at INTEGER NOT NULL,
                 status TEXT NOT NULL DEFAULT 'pending',
                 error TEXT,
+                album_name TEXT,
+                album_type TEXT,
+                album_file_id TEXT,
                 UNIQUE(channel_id, message_id)
             );
             CREATE TABLE IF NOT EXISTS faces (
@@ -44,6 +47,10 @@ class Store:
                 next_result INTEGER NOT NULL DEFAULT 0
             );
         """)
+        columns = {row[1] for row in self.db.execute("PRAGMA table_info(assets)")}
+        for name in ("album_name", "album_type", "album_file_id"):
+            if name not in columns:
+                self.db.execute(f"ALTER TABLE assets ADD COLUMN {name} TEXT")
 
     def get_offset(self) -> int:
         row = self.db.execute("SELECT value FROM settings WHERE key='update_offset'").fetchone()
@@ -96,6 +103,21 @@ class Store:
         return self.db.execute("""SELECT 1 FROM assets WHERE channel_id=? AND message_id=?
             AND status='ready'""",
                                (channel_id, message_id)).fetchone() is not None
+
+    def attach_album_media(self, channel_id: int, message_id: int,
+                           name: str, media_type: str) -> None:
+        if Path(name).name != name or media_type not in {"photo", "document"}:
+            raise ValueError("Invalid album media")
+        with self.db:
+            self.db.execute("""UPDATE assets SET
+                album_file_id=CASE WHEN album_name=? AND album_type=? THEN album_file_id ELSE NULL END,
+                album_name=?, album_type=?
+                WHERE channel_id=? AND message_id=? AND status='ready'""",
+                            (name, media_type, name, media_type, channel_id, message_id))
+
+    def cache_album_file_id(self, asset_id: int, file_id: str) -> None:
+        with self.db:
+            self.db.execute("UPDATE assets SET album_file_id=? WHERE id=?", (file_id, asset_id))
 
     def _insert_faces(self, asset_id: int, faces: list[Face], cluster_threshold: float) -> None:
         representatives = self.cluster_representatives()
